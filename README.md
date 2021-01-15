@@ -17,7 +17,7 @@ Edit the entry named "Hg.SecureShellSync" and set following fields:
 - password
 - url with the following format:
 
-sftp://<ip or domain>[:port]/[path/to/db/]
+sftp://\<ip or domain\>[:port]/[path/to/db/]
 
 Note that "path/to/db/" is the path to the folder where the db will be sync, the original name of the db will be use.
 
