@@ -67,7 +67,7 @@ Over the few next year I mostly fixed few bugs and improved the sync process and
 
 My last update was around 2017 with a bump of SSH.NET to version 2016.
 
-This project has been moving from computer to computer and has never been in any verson control system and I almost lost it because of this.
+This project has been moving from computer to computer and has never been in any version control system and I almost lost it because of this.
 
 So after 8 years, I think it is long overdue to properly manage it using a proper SCM and and share it.
 
