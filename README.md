@@ -1,6 +1,6 @@
 # Hg.SecureShellSync
 
-Allow to synchronize databases using SFTP (FTP over SSH)
+Allow to synchronize keepass databases using SFTP (FTP over SSH)
 
 The sftp connection info are store using a standard entry in the database.
 
@@ -69,5 +69,5 @@ My last update was around 2017 with a bump of SSH.NET to version 2016.
 
 This project has been moving from computer to computer and has never been in any version control system and I almost lost it because of this.
 
-So after 8 years, I think it is long overdue to properly manage it using a proper SCM and and share it.
+So after 8 years, I think it is long overdue to properly manage it using a proper SCM and share it.
 
