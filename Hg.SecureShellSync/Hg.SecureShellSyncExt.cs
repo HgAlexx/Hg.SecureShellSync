@@ -467,7 +467,7 @@ namespace HgSecureShellSync
             else
             {
                 GenerateSubMenus();
-                if (_timer != null)
+                if (_timer != null && _optionTimerTimeSpanValue > 0)
                 {
                     _timerNextSync = DateTime.UtcNow.AddMinutes(_optionTimerTimeSpanValue);
                     _timer.Start();
@@ -580,7 +580,7 @@ namespace HgSecureShellSync
 
             if (_optionTimerTimeSpanValue == 0)
             {
-                _host.MainWindow.SetStatusEx(KPRes.Auto + "-" + KPRes.Synchronize +
+                _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.Auto + "-" + KPRes.Synchronize +
                                              " " + KPRes.Disabled);
             }
             else
@@ -715,7 +715,7 @@ namespace HgSecureShellSync
                 EntryRetrieve(PwDefs.UserNameField),
                 EntryRetrieve(PwDefs.PasswordField));
 
-            _host.MainWindow.SetStatusEx("Synchronizing...");
+            _host.MainWindow.SetStatusEx(PluginName + ": " + "Synchronizing...");
 
             switch (hgSecureShellSyncData.Protocol)
             {
@@ -945,7 +945,7 @@ namespace HgSecureShellSync
                 sftpClient.Disconnect();
                 OptionsEntryLoad();
                 GenerateSubMenus();
-                if (_timer != null)
+                if (_timer != null && _optionTimerTimeSpanValue > 0)
                 {
                     _timer.Start();
                 }
@@ -980,6 +980,7 @@ namespace HgSecureShellSync
                     if (_timerLastHours != hours || _timerLastMinutes != minutes)
                     {
                         _host.MainWindow.SetStatusEx(
+                            PluginName + ": " +
                             string.Format(
                                 KPRes.Auto + "-" + KPRes.Synchronize + ": {0}h{1}",
                                 hours, minutes.ToString("00")));
@@ -992,6 +993,7 @@ namespace HgSecureShellSync
                     if (_timerLastMinutes != minutes)
                     {
                         _host.MainWindow.SetStatusEx(
+                            PluginName + ": " +
                             string.Format(
                                 KPRes.Auto + "-" + KPRes.Synchronize + ": {0}h{1}",
                                 hours, minutes.ToString("00")));
@@ -1002,6 +1004,7 @@ namespace HgSecureShellSync
                 else if (minutes == 0)
                 {
                     _host.MainWindow.SetStatusEx(
+                        PluginName + ": " +
                         string.Format(
                             KPRes.Auto + "-" + KPRes.Synchronize + ": {0}s",
                             (int) timeSpan.TotalSeconds));
