@@ -8,9 +8,9 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyTitle("Hg.SecureShellSync")]
 [assembly: AssemblyDescription("Allow to synchronize databases using SFTP (FTP over SSH)")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Hg")]
+[assembly: AssemblyCompany("HgAlexx")]
 [assembly: AssemblyProduct("KeePass Plugin")]
-[assembly: AssemblyCopyright("Copyright ©  2021")]
+[assembly: AssemblyCopyright("Copyright ©  2022")]
 [assembly: AssemblyTrademark("Hg")]
 [assembly: AssemblyCulture("")]
 
@@ -32,5 +32,5 @@ using System.Runtime.InteropServices;
 // Vous pouvez spécifier toutes les valeurs ou indiquer les numéros de build et de révision par défaut 
 // en utilisant '*', comme indiqué ci-dessous :
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("1.48.0.0")]
-[assembly: AssemblyFileVersion("1.48.0.0")]
+[assembly: AssemblyVersion("1.50.0.0")]
+[assembly: AssemblyFileVersion("1.50.0.0")]
