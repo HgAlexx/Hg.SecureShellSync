@@ -1,11 +1,4 @@
-﻿using System;
-using System.Globalization;
-using System.IO;
-using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
-using System.Windows.Forms;
-using KeePass.Forms;
+﻿using KeePass.Forms;
 using KeePass.Plugins;
 using KeePass.Resources;
 using KeePassLib;
@@ -14,6 +7,14 @@ using KeePassLib.Resources;
 using KeePassLib.Security;
 using KeePassLib.Serialization;
 using Renci.SshNet;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Windows.Forms;
 
 namespace HgSecureShellSync
 {
@@ -32,6 +33,7 @@ namespace HgSecureShellSync
         UploadFailed,
         MergeFailed
     }
+
 
     public class HgSecureShellSyncData
     {
@@ -62,6 +64,7 @@ namespace HgSecureShellSync
         private const string FieldOptionSyncOnOpen = "OptionSyncOnOpen";
         private const string FieldOptionSyncOnSave = "OptionSyncOnSave";
         private const string FieldOptionTimerTimeSpanValue = "OptionTimerTimeSpanValue";
+        private const string FieldOverrideUrl = "OverrideUrl";
         private const string PluginName = "Hg.SecureShellSync";
 
         private IPluginHost _host;
@@ -69,6 +72,7 @@ namespace HgSecureShellSync
         private PwEntry _optionsEntry;
         private PwUuid _optionsUuid;
 
+        private readonly Dictionary<string, string> _overrideUrl = new Dictionary<string, string>();
         private bool _optionSyncOnOpen;
         private bool _optionSyncOnSave;
         private int _optionTimerTimeSpanValue;
@@ -80,10 +84,16 @@ namespace HgSecureShellSync
         private DateTime _timerNextSync;
         private ToolStripMenuItem _tsmiOptions;
         private ToolStripMenuItem _tsmiOptionsTimer;
+        private ToolStripMenuItem _tsmiOverride;
         private ToolStripMenuItem _tsmiPopup;
         private ToolStripMenuItem _tsmiSync;
 
         private ToolStripSeparator _tsSeparator;
+
+        private string _machineName;
+        private ToolStripMenuItem _tsmiUrlAdd;
+        private ToolStripMenuItem _tsmiUrlEdit;
+        private ToolStripMenuItem _tsmiUrlDelete;
 
         #endregion
 
@@ -93,6 +103,8 @@ namespace HgSecureShellSync
         {
             _host = host;
             _timer = new Timer();
+
+            _machineName = Environment.MachineName.Trim();
 
             if (_timer != null)
             {
@@ -114,17 +126,10 @@ namespace HgSecureShellSync
             _tsmiPopup.Text = PluginName;
             tsMenu.Add(_tsmiPopup);
 
-            ToolStripMenuItem tsmiOpen = new ToolStripMenuItem();
-            tsmiOpen.Text = KPRes.UrlOpenTitle;
-            tsmiOpen.Click += OnMenuOpen;
-            tsmiOpen.Enabled = false;
-            _tsmiPopup.DropDownItems.Add(tsmiOpen);
-
             _host.MainWindow.FileClosed += OnFileClosed;
             _host.MainWindow.FileSaved += OnFileSaved;
             _host.MainWindow.FileOpened += OnFileOpened;
             _host.MainWindow.FileCreated += OnFileCreated;
-
 
             return true;
         }
@@ -268,7 +273,7 @@ namespace HgSecureShellSync
                     _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
                     if (!_isAutoSync)
                     {
-                        MessageBox.Show(KPRes.InvalidUserPassword, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show(KPRes.Invalid + " (" + KPRes.UserName + " / " + KPRes.Password + ")!", PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
 
                     break;
@@ -353,6 +358,12 @@ namespace HgSecureShellSync
                 _tsmiPopup.DropDownItems.Remove(_tsmiSync);
             }
 
+            if (_tsmiOverride != null)
+            {
+                _tsmiPopup.DropDownItems.Remove(_tsmiOverride);
+            }
+
+
             _tsmiSync = new ToolStripMenuItem();
             _tsmiSync.Text = KPRes.Synchronize;
             _tsmiSync.Click += OnMenuSync;
@@ -393,12 +404,122 @@ namespace HgSecureShellSync
             AddTimeSpanValue(6, _tsmiOptionsTimer);
             AddTimeSpanValue(12, _tsmiOptionsTimer);
             AddTimeSpanValue(24, _tsmiOptionsTimer);
+
+
+            _tsmiOverride = new ToolStripMenuItem();
+            _tsmiOverride.Text = KPRes.Overwrite;
+            _tsmiPopup.DropDownItems.Insert(2, _tsmiOverride);
+
+
+            ToolStripMenuItem tsmiOverrideUrl = new ToolStripMenuItem();
+            tsmiOverrideUrl.Text = KPRes.Url;
+            _tsmiOverride.DropDownItems.Add(tsmiOverrideUrl);
+
+            _tsmiUrlAdd = new ToolStripMenuItem();
+            _tsmiUrlAdd.Text = "Add for " + _machineName;
+            _tsmiUrlAdd.Enabled = !_overrideUrl.ContainsKey(_machineName);
+            _tsmiUrlAdd.Click += OnMenuOverrideUrlAdd;
+            tsmiOverrideUrl.DropDownItems.Add(_tsmiUrlAdd);
+
+            _tsmiUrlEdit = new ToolStripMenuItem();
+            _tsmiUrlEdit.Text = "Edit for " + _machineName;
+            _tsmiUrlEdit.Enabled = _overrideUrl.ContainsKey(_machineName);
+            _tsmiUrlEdit.Click += OnMenuOverrideUrlEdit;
+            tsmiOverrideUrl.DropDownItems.Add(_tsmiUrlEdit);
+
+            _tsmiUrlDelete = new ToolStripMenuItem();
+            _tsmiUrlDelete.Text = "Delete for " + _machineName;
+            _tsmiUrlDelete.Enabled = _overrideUrl.ContainsKey(_machineName);
+            _tsmiUrlDelete.Click += OnMenuOverrideUrlDelete;
+            tsmiOverrideUrl.DropDownItems.Add(_tsmiUrlDelete);
+
         }
 
-        private HgSecureShellSyncData GetHgKeePassSftpSyncData()
+        private void OnMenuOverrideUrlAdd(object sender, EventArgs e)
+        {
+            ToolStripMenuItem item = sender as ToolStripMenuItem;
+            if (item == null)
+            {
+                return;
+            }
+
+            HgUrl hgUrl = new HgUrl();
+            hgUrl.Text = @"Add Url for " + _machineName;
+            hgUrl.SetUrl("");
+
+            if (hgUrl.ShowDialog() == DialogResult.OK)
+            {
+                if (_overrideUrl.ContainsKey(_machineName))
+                    _overrideUrl.Remove(_machineName);
+                _overrideUrl.Add(_machineName, hgUrl.GetUrl());
+                _tsmiUrlAdd.Enabled = false;
+                _tsmiUrlEdit.Enabled = true;
+                _tsmiUrlDelete.Enabled = true;
+                _optionsEntry.Strings.Set(FieldOverrideUrl, new ProtectedString(false, SerializeOverrideUrl()));
+                _optionsEntry.Touch(true);
+                _host.MainWindow.UpdateUI(false, null, true, null, true, null, true);
+            }
+        }
+
+        private void OnMenuOverrideUrlDelete(object sender, EventArgs e)
+        {
+            ToolStripMenuItem item = sender as ToolStripMenuItem;
+            if (item == null)
+            {
+                return;
+            }
+
+            if (_overrideUrl.ContainsKey(_machineName))
+            {
+                _overrideUrl.Remove(_machineName);
+                _tsmiUrlAdd.Enabled = true;
+                _tsmiUrlEdit.Enabled = false;
+                _tsmiUrlDelete.Enabled = false;
+                _optionsEntry.Strings.Set(FieldOverrideUrl, new ProtectedString(false, SerializeOverrideUrl()));
+                _optionsEntry.Touch(true);
+                _host.MainWindow.UpdateUI(false, null, true, null, true, null, true);
+            }
+        }
+
+        private void OnMenuOverrideUrlEdit(object sender, EventArgs e)
+        {
+            ToolStripMenuItem item = sender as ToolStripMenuItem;
+            if (item == null)
+            {
+                return;
+            }
+
+            if (!_overrideUrl.ContainsKey(_machineName))
+                return;
+
+            HgUrl hgUrl = new HgUrl();
+            hgUrl.Text = @"Edit Url for " + _machineName;
+            hgUrl.SetUrl(_overrideUrl[_machineName]);
+
+            if (hgUrl.ShowDialog() == DialogResult.OK)
+            {
+                _overrideUrl[_machineName] = hgUrl.GetUrl();
+                _optionsEntry.Strings.Set(FieldOverrideUrl, new ProtectedString(false, SerializeOverrideUrl()));
+                _optionsEntry.Touch(true);
+                _host.MainWindow.UpdateUI(false, null, true, null, true, null, true);
+            }
+        }
+
+        private HgSecureShellSyncData GetHgSecureShellSyncData()
         {
             HgSecureShellSyncData hgSecureShellSyncData = new HgSecureShellSyncData();
-            string url = EntryRetrieve(PwDefs.UrlField);
+
+            string url;
+
+            // check for overridden Url first
+            if (_overrideUrl.ContainsKey(_machineName))
+            {
+                url = _overrideUrl[_machineName];
+            }
+            else
+            {
+                url = EntryRetrieve(PwDefs.UrlField);
+            }
 
             if (!url.StartsWith("sftp://"))
             {
@@ -438,6 +559,11 @@ namespace HgSecureShellSync
             if (_tsmiSync != null)
             {
                 _tsmiPopup.DropDownItems.Remove(_tsmiSync);
+            }
+
+            if (_tsmiOverride != null)
+            {
+                _tsmiPopup.DropDownItems.Remove(_tsmiOverride);
             }
 
             //DebugMsg("OnFileClosed");
@@ -637,6 +763,8 @@ namespace HgSecureShellSync
             _optionsEntry.Strings.Set(FieldOptionSyncOnSave,
                 new ProtectedString(false,
                     _optionSyncOnSave.ToString(CultureInfo.InvariantCulture)));
+            _optionsEntry.Strings.Set(FieldOverrideUrl,
+                new ProtectedString(false, ""));
 
             _host.MainWindow.ActiveDatabase.RootGroup.AddEntry(_optionsEntry, true, true);
             _host.MainWindow.UpdateUI(false, null, true, null, true, null, true);
@@ -684,9 +812,15 @@ namespace HgSecureShellSync
                     EntryStore(FieldOptionSyncOnSave, _optionSyncOnSave.ToString());
                 }
 
+                if (!_optionsEntry.Strings.Exists(FieldOverrideUrl))
+                {
+                    EntryStore(FieldOptionSyncOnSave, "");
+                }
+
                 int.TryParse(EntryRetrieve(FieldOptionTimerTimeSpanValue), out _optionTimerTimeSpanValue);
                 bool.TryParse(EntryRetrieve(FieldOptionSyncOnOpen), out _optionSyncOnOpen);
                 bool.TryParse(EntryRetrieve(FieldOptionSyncOnSave), out _optionSyncOnSave);
+                DeserializeOverrideUrl(EntryRetrieve(FieldOverrideUrl));
 
                 if (_optionTimerTimeSpanValue < 0)
                 {
@@ -697,6 +831,28 @@ namespace HgSecureShellSync
             return _optionsEntry != null;
         }
 
+        private void DeserializeOverrideUrl(string overrideUrl)
+        {
+            _overrideUrl.Clear();
+
+            if (string.IsNullOrEmpty(overrideUrl))
+                return;
+
+            string[] lines = overrideUrl.Split(new[] { '#' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                string[] data = line.Split(new[] { '=' }, StringSplitOptions.None);
+                if (data.Length == 2)
+                    _overrideUrl.Add(data[0], data[1]);
+            }
+        }
+
+        private string SerializeOverrideUrl()
+        {
+            var lines = _overrideUrl.Select(pair => pair.Key + "=" + pair.Value).AsEnumerable();
+            return string.Join("#", lines);
+        }
+
         private SyncResultCode Synchronize()
         {
             if (_timer != null)
@@ -704,7 +860,7 @@ namespace HgSecureShellSync
                 _timer.Stop();
             }
 
-            HgSecureShellSyncData hgSecureShellSyncData = GetHgKeePassSftpSyncData();
+            HgSecureShellSyncData hgSecureShellSyncData = GetHgSecureShellSyncData();
             if (hgSecureShellSyncData == null)
             {
                 return SyncResultCode.InvalidParameters;
