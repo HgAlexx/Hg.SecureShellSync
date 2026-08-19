@@ -69,6 +69,7 @@ namespace HgSecureShellSync
 
         private IPluginHost _host;
         private bool _isAutoSync;
+        private bool _isSynchronizing;
         private PwEntry _optionsEntry;
         private PwUuid _optionsUuid;
 
@@ -230,7 +231,16 @@ namespace HgSecureShellSync
                 _timerNextSync = DateTime.UtcNow.AddMinutes(_optionTimerTimeSpanValue);
             }
 
-            SyncResultCode result = Synchronize();
+            SyncResultCode result;
+            _isSynchronizing = true;
+            try
+            {
+                result = Synchronize();
+            }
+            finally
+            {
+                _isSynchronizing = false;
+            }
 
             switch (result)
             {
@@ -613,7 +623,7 @@ namespace HgSecureShellSync
         {
             //DebugMsg("OnFileSaved: " + sender);
 
-            if (_optionSyncOnSave)
+            if (_optionSyncOnSave && !_isSynchronizing)
             {
                 if (_host.MainWindow.IsAtLeastOneFileOpen() && _host.MainWindow.ActiveDatabase.IsOpen)
                 {
@@ -853,6 +863,13 @@ namespace HgSecureShellSync
             return string.Join("#", lines);
         }
 
+        private void SaveActiveDatabase()
+        {
+            // MainWindow.SaveDatabase raises the FileSaving/FileSaved events,
+            // which is what KeePass triggers ("Saving database", "Saved database") listen to.
+            _host.MainWindow.SaveDatabase(_host.Database, null);
+        }
+
         private SyncResultCode Synchronize()
         {
             if (_timer != null)
@@ -909,7 +926,6 @@ namespace HgSecureShellSync
             string remoteDbPath = hgSecureShellSyncData.Path + Path.GetFileName(_host.MainWindow.ActiveDatabase.IOConnectionInfo.Path);
 
             bool fileCorrupted = false;
-            bool localSaved = false;
 
             FileStream fileStream = null;
 
@@ -922,7 +938,7 @@ namespace HgSecureShellSync
                     sftpClient.DownloadFile(remoteDbPath, fileStream);
                     fileStream.Close();
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     if (fileStream != null)
                     {
@@ -946,20 +962,20 @@ namespace HgSecureShellSync
                     // load remote (temp) db
                     localTempDb.Open(ioConnectionInfo, _host.Database.MasterKey, logger);
                     // save local (active) db to be sure to have up-to-date data
+                    // (silent save: the events are raised by the post-merge save only)
                     _host.Database.Save(logger);
-                    localSaved = true;
                     // merge remote into local
                     _host.Database.MergeIn(localTempDb, PwMergeMethod.Synchronize);
                     // Refresh UI
                     _host.MainWindow.UpdateUI(false, null, true, null, true, null, true);
                     localTempDb.Close();
                 }
-                catch (CryptographicException ex)
+                catch (CryptographicException)
                 {
                     // remote file is corrupted
                     fileCorrupted = true;
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     return SyncResultCode.MergeFailed;
                 }
@@ -1005,8 +1021,8 @@ namespace HgSecureShellSync
             try
             {
                 // save local (active) db to be sure to have up-to-date data
-                if (!localSaved)
-                    _host.Database.Save(logger2);
+                // (also persists the data merged in from the remote db and raises the save events)
+                SaveActiveDatabase();
 
                 // SaveAs local (active) db into tempFile
                 _host.Database.SaveAs(ioConnectionInfo2, false, logger2);
@@ -1026,7 +1042,7 @@ namespace HgSecureShellSync
                 sftpClient.UploadFile(fileStream2, remoteDbPath);
                 fileStream2.Close();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 if (fileStream2 != null)
                 {
