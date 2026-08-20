@@ -13,6 +13,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Forms;
@@ -101,6 +102,24 @@ namespace HgSecureShellSync
         #endregion
 
         #region Members
+
+        public override string UpdateUrl
+        {
+            get
+            {
+                return string.Format(CultureInfo.InvariantCulture,
+                    "https://raw.githubusercontent.com/HgAlexx/Hg.SecureShellSync/refs/tags/v{0}/version.txt",
+                    GetVersionTag());
+            }
+        }
+
+        // The release tag matches the AssemblyVersion, keeping only the major and minor parts
+        // (for example 1.80.0.0 becomes "1.80").
+        private static string GetVersionTag()
+        {
+            Version version = Assembly.GetExecutingAssembly().GetName().Version;
+            return version.ToString(2);
+        }
 
         public override bool Initialize(IPluginHost host)
         {
