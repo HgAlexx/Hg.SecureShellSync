@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>Hg.SecureShellSync.DependencyUpdater</AssemblyName>
+    <RootNamespace>Hg.SecureShellSync.DependencyUpdater</RootNamespace>
+    <!-- Ensures the full transitive closure is copied to the output folder,
+         which is what the plugin's lib\ folder must mirror. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+  </PropertyGroup>
+
+  <!-- The plugin is compiled by KeePass into a PLGX and cannot restore NuGet packages,
+       so every dependency below must exist as a committed DLL in Hg.SecureShellSync\lib.
+       Add a PackageReference here and run this tool to keep that folder in sync. -->
+  <ItemGroup>
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+  </ItemGroup>
+
+</Project>

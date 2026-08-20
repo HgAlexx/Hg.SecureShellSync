@@ -9,6 +9,7 @@ using KeePassLib.Serialization;
 using Renci.SshNet;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -86,6 +87,7 @@ namespace HgSecureShellSync
         private ToolStripMenuItem _tsmiOptions;
         private ToolStripMenuItem _tsmiOptionsTimer;
         private ToolStripMenuItem _tsmiOverride;
+        private ToolStripMenuItem _tsmiDiagnostics;
         private ToolStripMenuItem _tsmiPopup;
         private ToolStripMenuItem _tsmiSync;
 
@@ -102,6 +104,14 @@ namespace HgSecureShellSync
 
         public override bool Initialize(IPluginHost host)
         {
+            // Must run before any dependency is touched: a PLGX has no app.config, so the
+            // binding redirects our NuGet dependencies expect have to be applied at runtime.
+            HgAssemblyResolver.Install();
+
+            // Logging never persists between sessions: it starts disabled and any file left
+            // behind by a previous run (for example after a crash) is discarded.
+            HgLog.Enabled = false;
+            HgLog.Delete();
             _host = host;
             _timer = new Timer();
 
@@ -147,6 +157,12 @@ namespace HgSecureShellSync
             ToolStripItemCollection tsMenu = _host.MainWindow.ToolsMenu.DropDownItems;
             tsMenu.Remove(_tsSeparator);
             tsMenu.Remove(_tsmiPopup);
+
+            // Best effort: the log is a transient debugging aid, it must not survive the session.
+            HgLog.Enabled = false;
+            HgLog.Delete();
+
+            HgAssemblyResolver.Uninstall();
         }
 
         private void AddTimeSpanValue(double hours, ToolStripMenuItem tsmiOptionsTimer)
@@ -210,18 +226,6 @@ namespace HgSecureShellSync
             return true;
         }
 
-        private void DebugMsg(string text)
-        {
-#if (DEBUG)
-            //MessageBox.Show(text, "Debug message", MessageBoxButtons.OK, MessageBoxIcon.Information);
-#endif
-        }
-
-        private void DebugMsg(Exception ex)
-        {
-            DebugMsg(ex.Message + Environment.NewLine + ex.StackTrace);
-        }
-
         private SyncResultCode DoSynchronize()
         {
             //DebugMsg("DoSynchronize");
@@ -231,113 +235,111 @@ namespace HgSecureShellSync
                 _timerNextSync = DateTime.UtcNow.AddMinutes(_optionTimerTimeSpanValue);
             }
 
-            SyncResultCode result;
+            SyncResult result;
             _isSynchronizing = true;
             try
             {
                 result = Synchronize();
+            }
+            catch (Exception ex)
+            {
+                // Nothing above is allowed to escape: an unhandled exception here would surface
+                // as a bare KeePass crash dialog with no indication that this plugin caused it.
+                result = SyncResult.Fail(SyncResultCode.UnknownError, "Synchronize", ex);
             }
             finally
             {
                 _isSynchronizing = false;
             }
 
-            switch (result)
+            if (result.Succeeded)
             {
-                case SyncResultCode.Success:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncSuccess);
-                    break;
+                HgLog.Info("Synchronization succeeded.");
+                _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncSuccess);
+                return result.Code;
+            }
+
+            // Always logged, including during auto-sync where no dialog is shown at all.
+            HgLog.Error("Synchronization failed. " + result.GetLogDetail());
+
+            _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed + " (" + result.Code + ")");
+
+            if (!_isAutoSync)
+            {
+                MessageBox.Show(
+                    BuildFailureMessage(result),
+                    PluginName + ": " + KPRes.SyncFailed,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+
+            return result.Code;
+        }
+
+        /// <summary>
+        /// Builds the text shown when a synchronization fails: the summary that matches the
+        /// result code, then the underlying reason, then where to find the full log.
+        /// </summary>
+        private static string BuildFailureMessage(SyncResult result)
+        {
+            string summary;
+
+            switch (result.Code)
+            {
                 case SyncResultCode.InvalidParameters:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KPRes.InvalidUrl, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
-                    break;
                 case SyncResultCode.InvalidProtocol:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KPRes.InvalidUrl, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
-                    break;
                 case SyncResultCode.InvalidHost:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KPRes.InvalidUrl, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
-                    break;
                 case SyncResultCode.InvalidPort:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KPRes.InvalidUrl, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
+                    summary = KPRes.InvalidUrl;
                     break;
                 case SyncResultCode.InvalidCredentials:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KPRes.Invalid + " (" + KPRes.UserName + " / " + KPRes.Password + ")!", PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
+                    summary = KPRes.Invalid + " (" + KPRes.UserName + " / " + KPRes.Password + ")!";
                     break;
                 case SyncResultCode.InvalidPath:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KPRes.FileNotFoundError, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
+                    summary = KPRes.FileNotFoundError;
                     break;
                 case SyncResultCode.ConnectFailed:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KLRes.UnknownError, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
+                    summary = "Unable to connect to the server.";
                     break;
                 case SyncResultCode.DownloadFailed:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KLRes.UnknownError, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
+                    summary = "Unable to download the remote database.";
                     break;
                 case SyncResultCode.UploadFailed:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KLRes.UnknownError, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
+                    summary = "Unable to upload the local database.";
                     break;
                 case SyncResultCode.MergeFailed:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KLRes.UnknownError, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
+                    summary = "Unable to merge the remote database.";
                     break;
                 default:
-                    _host.MainWindow.SetStatusEx(PluginName + ": " + KPRes.SyncFailed);
-                    if (!_isAutoSync)
-                    {
-                        MessageBox.Show(KLRes.UnknownError, PluginName + ": " + KPRes.SyncFailed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-
+                    summary = KLRes.UnknownError;
                     break;
             }
 
-            return result;
+            StringBuilder message = new StringBuilder();
+            message.Append(summary);
+
+            string detail = result.GetDetail();
+            if (!string.IsNullOrEmpty(detail))
+            {
+                message.AppendLine();
+                message.AppendLine();
+                message.Append(detail);
+            }
+
+            message.AppendLine();
+            message.AppendLine();
+            if (HgLog.Enabled)
+            {
+                message.Append("Details were written to:");
+                message.AppendLine();
+                message.Append(HgLog.LogFilePath);
+            }
+            else
+            {
+                message.Append("For more details, enable logging from the plugin Diagnostics menu and retry.");
+            }
+
+            return message.ToString();
         }
 
         private string EntryRetrieve(string key)
@@ -371,6 +373,11 @@ namespace HgSecureShellSync
             if (_tsmiOverride != null)
             {
                 _tsmiPopup.DropDownItems.Remove(_tsmiOverride);
+            }
+
+            if (_tsmiDiagnostics != null)
+            {
+                _tsmiPopup.DropDownItems.Remove(_tsmiDiagnostics);
             }
 
 
@@ -443,6 +450,109 @@ namespace HgSecureShellSync
             _tsmiUrlDelete.Click += OnMenuOverrideUrlDelete;
             tsmiOverrideUrl.DropDownItems.Add(_tsmiUrlDelete);
 
+            _tsmiDiagnostics = new ToolStripMenuItem();
+            _tsmiDiagnostics.Text = "Diagnostics";
+            _tsmiPopup.DropDownItems.Insert(3, _tsmiDiagnostics);
+
+            ToolStripMenuItem tsmiDiagnosticsEnabled = new ToolStripMenuItem();
+            tsmiDiagnosticsEnabled.Text = "Enable logging (this session only)";
+            tsmiDiagnosticsEnabled.CheckState = HgLog.Enabled ? CheckState.Checked : CheckState.Unchecked;
+            tsmiDiagnosticsEnabled.Click += OnMenuDiagnosticsEnabled;
+            _tsmiDiagnostics.DropDownItems.Add(tsmiDiagnosticsEnabled);
+
+            ToolStripMenuItem tsmiDiagnosticsView = new ToolStripMenuItem();
+            tsmiDiagnosticsView.Text = "View log";
+            tsmiDiagnosticsView.Click += OnMenuDiagnosticsViewLog;
+            _tsmiDiagnostics.DropDownItems.Add(tsmiDiagnosticsView);
+
+            ToolStripMenuItem tsmiDiagnosticsFolder = new ToolStripMenuItem();
+            tsmiDiagnosticsFolder.Text = "Open log folder";
+            tsmiDiagnosticsFolder.Click += OnMenuDiagnosticsOpenLogFolder;
+            _tsmiDiagnostics.DropDownItems.Add(tsmiDiagnosticsFolder);
+
+            ToolStripMenuItem tsmiDiagnosticsClear = new ToolStripMenuItem();
+            tsmiDiagnosticsClear.Text = "Clear log";
+            tsmiDiagnosticsClear.Click += OnMenuDiagnosticsClearLog;
+            _tsmiDiagnostics.DropDownItems.Add(tsmiDiagnosticsClear);
+
+        }
+
+        private void OnMenuDiagnosticsEnabled(object sender, EventArgs e)
+        {
+            ToolStripMenuItem item = sender as ToolStripMenuItem;
+            if (item == null)
+            {
+                return;
+            }
+
+            if (HgLog.Enabled)
+            {
+                HgLog.Enabled = false;
+                // Leaving logging off must not leave the collected data on disk.
+                HgLog.Delete();
+            }
+            else
+            {
+                HgLog.Enabled = true;
+                HgLog.Info("Logging enabled. This log is deleted when KeePass exits.");
+            }
+
+            item.CheckState = HgLog.Enabled ? CheckState.Checked : CheckState.Unchecked;
+            _host.MainWindow.SetStatusEx(PluginName + ": logging " + (HgLog.Enabled ? "enabled" : "disabled"));
+        }
+
+        private void OnMenuDiagnosticsViewLog(object sender, EventArgs e)
+        {
+            if (!File.Exists(HgLog.LogFilePath))
+            {
+                string reason = HgLog.Enabled
+                    ? "The log is empty: " + HgLog.LogFilePath
+                    : "Logging is disabled. Enable it from this menu, then reproduce the issue.";
+
+                MessageBox.Show(reason, PluginName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            OpenWithShell(HgLog.LogFilePath);
+        }
+
+        private void OnMenuDiagnosticsOpenLogFolder(object sender, EventArgs e)
+        {
+            string folder = Path.GetDirectoryName(HgLog.LogFilePath);
+            if (string.IsNullOrEmpty(folder))
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(folder);
+            }
+            catch (Exception ex)
+            {
+                HgLog.Warn("Unable to create the log folder. " + HgLog.Describe(ex, true));
+            }
+
+            OpenWithShell(folder);
+        }
+
+        private void OnMenuDiagnosticsClearLog(object sender, EventArgs e)
+        {
+            HgLog.Clear();
+            _host.MainWindow.SetStatusEx(PluginName + ": log cleared");
+        }
+
+        private void OpenWithShell(string path)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                HgLog.Warn("Unable to open " + path + ". " + HgLog.Describe(ex, true));
+                MessageBox.Show(path, PluginName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
 
         private void OnMenuOverrideUrlAdd(object sender, EventArgs e)
@@ -870,7 +980,7 @@ namespace HgSecureShellSync
             _host.MainWindow.SaveDatabase(_host.Database, null);
         }
 
-        private SyncResultCode Synchronize()
+        private SyncResult Synchronize()
         {
             if (_timer != null)
             {
@@ -880,7 +990,8 @@ namespace HgSecureShellSync
             HgSecureShellSyncData hgSecureShellSyncData = GetHgSecureShellSyncData();
             if (hgSecureShellSyncData == null)
             {
-                return SyncResultCode.InvalidParameters;
+                return SyncResult.Fail(SyncResultCode.InvalidParameters,
+                    "The synchronization URL is missing or could not be parsed");
             }
 
             PasswordConnectionInfo passwordConnectionInfo = new PasswordConnectionInfo(hgSecureShellSyncData.Host,
@@ -897,23 +1008,29 @@ namespace HgSecureShellSync
                     return SynchronizeSftp(sftpClient, hgSecureShellSyncData);
             }
 
-            return SyncResultCode.InvalidProtocol;
+            return SyncResult.Fail(SyncResultCode.InvalidProtocol,
+                "Unsupported protocol '" + hgSecureShellSyncData.Protocol + "', only sftp is supported");
         }
 
-        private SyncResultCode SynchronizeSftp(SftpClient sftpClient, HgSecureShellSyncData hgSecureShellSyncData)
+        private SyncResult SynchronizeSftp(SftpClient sftpClient, HgSecureShellSyncData hgSecureShellSyncData)
         {
             try
             {
+                HgLog.Info(string.Format("Connecting to host: {0}, port: {1}, remotePath: {2}",
+                    hgSecureShellSyncData.Host,
+                    hgSecureShellSyncData.Port,
+                    hgSecureShellSyncData.Path));
                 sftpClient.Connect();
             }
             catch (Exception ex)
             {
-                if (ex.Message.Contains("username") || ex.Message.Contains("password"))
+                if ((ex.Message != null ? ex.Message.IndexOf("username", StringComparison.OrdinalIgnoreCase) : -1) >= 0 ||
+                    (ex.Message != null ? ex.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) : -1) >= 0)
                 {
-                    return SyncResultCode.InvalidCredentials;
+                    return SyncResult.Fail(SyncResultCode.InvalidCredentials, "Authentication", ex);
                 }
 
-                return SyncResultCode.ConnectFailed;
+                return SyncResult.Fail(SyncResultCode.ConnectFailed, "Connect", ex);
             }
 
             // sync here
@@ -938,7 +1055,7 @@ namespace HgSecureShellSync
                     sftpClient.DownloadFile(remoteDbPath, fileStream);
                     fileStream.Close();
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
                     if (fileStream != null)
                     {
@@ -950,7 +1067,7 @@ namespace HgSecureShellSync
                         File.Delete(localTempDbFile);
                     }
 
-                    return SyncResultCode.DownloadFailed;
+                    return SyncResult.Fail(SyncResultCode.DownloadFailed, "Download of " + remoteDbPath, ex);
                 }
 
                 IOConnectionInfo ioConnectionInfo = new IOConnectionInfo();
@@ -970,14 +1087,16 @@ namespace HgSecureShellSync
                     _host.MainWindow.UpdateUI(false, null, true, null, true, null, true);
                     localTempDb.Close();
                 }
-                catch (CryptographicException)
+                catch (CryptographicException ex)
                 {
-                    // remote file is corrupted
+                    // remote file is corrupted, or the master key no longer matches
+                    HgLog.Warn("Unable to open the remote database, it may be corrupted or the " +
+                               "master key may differ. " + HgLog.Describe(ex, false));
                     fileCorrupted = true;
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    return SyncResultCode.MergeFailed;
+                    return SyncResult.Fail(SyncResultCode.MergeFailed, "Merge", ex);
                 }
                 finally
                 {
@@ -1002,7 +1121,8 @@ namespace HgSecureShellSync
                         "- If you jave changed the masterkey on ANOTHER device since last sync, click no, THEN update the masterkey of the LOCAL database and THEN resync.",
                     "Unable to open remote file", MessageBoxButtons.YesNo, MessageBoxIcon.Stop) == DialogResult.No)
                 {
-                    return SyncResultCode.MergeFailed;
+                    return SyncResult.Fail(SyncResultCode.MergeFailed,
+                        "Merge: the remote database could not be opened and overwriting was declined");
                 }
 
                 // delete corrupted file (keep last backup)
@@ -1042,7 +1162,7 @@ namespace HgSecureShellSync
                 sftpClient.UploadFile(fileStream2, remoteDbPath);
                 fileStream2.Close();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 if (fileStream2 != null)
                 {
@@ -1054,7 +1174,7 @@ namespace HgSecureShellSync
                     File.Delete(localTempDbFile2);
                 }
 
-                return SyncResultCode.UploadFailed;
+                return SyncResult.Fail(SyncResultCode.UploadFailed, "Upload of " + remoteDbPath, ex);
             }
             finally
             {
@@ -1075,7 +1195,8 @@ namespace HgSecureShellSync
                     }
                     catch (Exception ex)
                     {
-                        DebugMsg(ex);
+                        // Non fatal: this is only the post-upload verification copy.
+                        HgLog.Warn("Unable to download the uploaded database for verification. " + HgLog.Describe(ex, true));
                     }
                     finally
                     {
@@ -1085,7 +1206,8 @@ namespace HgSecureShellSync
                 }
                 else
                 {
-                    return SyncResultCode.UploadFailed;
+                    return SyncResult.Fail(SyncResultCode.UploadFailed,
+                        "Upload verification: " + remoteDbPath + " is missing from the server after upload");
                 }
 
                 if (!AreFilesEqual(new FileInfo(localTempDbFile), new FileInfo(localTempDbFile2)))
@@ -1096,7 +1218,8 @@ namespace HgSecureShellSync
                         sftpClient.DeleteFile(remoteDbPath);
                     }
 
-                    return SyncResultCode.UploadFailed;
+                    return SyncResult.Fail(SyncResultCode.UploadFailed,
+                        "Upload verification: the uploaded file does not match the local database");
                 }
             }
             finally
@@ -1122,10 +1245,11 @@ namespace HgSecureShellSync
                     _timer.Start();
                 }
 
-                return SyncResultCode.Success;
+                return SyncResult.Ok();
             }
 
-            return SyncResultCode.UnknownError;
+            return SyncResult.Fail(SyncResultCode.UnknownError,
+                "The connection was lost before the synchronization could be confirmed");
         }
 
 
